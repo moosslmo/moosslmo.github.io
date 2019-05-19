@@ -1,159 +1,87 @@
 <template>
   <div class="container">
-    <div class="logo"></div>
-    <a-input placeholder="Your name" class="input-name"/>
-    <a-button type="primary" class="btn-start">Game Start</a-button>
+    <div class="logo-parent">
+      <div class="logo bounce"></div>
+    </div>
+    <a-input placeholder="Your name"
+             :value="name"
+             @change="input"
+             @pressEnter="pressEnter"
+             class="input-name center" />
+    <a-button type="primary"
+              class="btn-start center"
+              id="startBtn"
+              @click="clickStart">Game Start</a-button>
+    <footer>SFACE 2019 ⓒ All Right Reserved</footer>
   </div>
 </template>
 
 <script>
 import db, { firebase } from '../plugins/db'
 import User from '../components/User.vue'
+import { MAX_W_SIZE, MAX_H_SIZE } from '../plugins/constants.js'
 
-let faceDetector
+const MARGIN = 500
+const W_MIN = MARGIN
+const W_MAX = MAX_W_SIZE - MARGIN
+const H_MIN = MARGIN
+const H_MAX = MAX_H_SIZE - MARGIN
 
 export default {
-  data: () => ({
-    user: null,
-    uid: null,
-    me: null,
-    inputText: '',
-    isInputFocus: false,
-    isFace: false,
-    timer: null,
-  }),
-  firebase: () => ({
-    users: db.ref('users'),
-  }),
-  created() {
-    if (faceDetector) {
-      this.$message.warn(
-        `Go to "chrome://flags/" and enable "Experimental Web Platform features" for face detection API.`,
-        10,
-      )
+  data() {
+    return {
+      name: '',
     }
-    firebase.auth().onAuthStateChanged(user => {
-      if (user) {
-        console.log(user)
-        this.user = user
-        this.uid = user.uid
-        this.me = {
-          ...this.me,
-          avatar: user.photoURL,
-          name: user.displayName || user.email.substring(0, user.email.lastIndexOf('@')),
-          x: 100,
-          y: 100,
-        }
-        db.ref(`users/${this.uid}`).set(this.me)
-      }
-    })
-    window.addEventListener('beforeunload', e => {
-      db.ref(`users/${this.uid}`).set({})
-    })
-    window.addEventListener('keypress', e => {
-      if (e.keyCode !== 13 || !this.me) return
-      if (!this.isInputFocus) {
-        this.inputText = ''
-        this.$refs.input.focus()
-        this.isInputFocus = true
-      } else {
-        this.isInputFocus = false
-        e.target.blur()
-        if (this.inputText === '') return
-        this.me = {
-          ...this.me,
-          message: this.inputText,
-        }
-        db.ref(`users/${this.uid}/message`).set(this.inputText)
-        db.ref(`messages`)
-          .push()
-          .set(this.inputText)
-        this.inputText = ''
-      }
-    })
-    window.addEventListener('keypress', async e => {
-      // console.log(e.keyCode)
-      if ((e.keyCode !== 116 && e.keyCode !== 12613) || this.isInputFocus) return
-      if (!this.isFace) {
-        this.cameraOn()
-        this.isFace = true
-        this.timer = setInterval(() => {
-          faceDetector.detect(this.$refs.video).then(faces => {
-            if (!faces[0]) return
-            const { x, y, width, height } = faces[0].boundingBox
-            const margin = width / 3
-            this.$refs.canvas
-              .getContext('2d')
-              .drawImage(
-                this.$refs.video,
-                x - margin,
-                y - margin,
-                width + margin * 2,
-                height + margin * 2,
-                0,
-                0,
-                100,
-                100,
-              )
-            const base = this.$refs.canvas.toDataURL('image/jpeg', 0.5)
-            this.me = {
-              ...this.me,
-              face: base,
-              isFace: this.isFace,
-            }
-            db.ref(`users/${this.uid}`).set(this.me)
-          })
-        }, 100)
-      } else {
-        this.isFace = false
-        this.me = {
-          ...this.me,
-          isFace: this.isFace,
-        }
-        db.ref(`users/${this.uid}`).set(this.me)
-        clearInterval(this.timer)
-      }
-    })
   },
-  async mounted() {
+  firebase: {
+    users: {
+      source: db.ref('users'),
+      asArray: true,
+    },
   },
   methods: {
-    mousemove(e) {
-      if (!this.user && !this.uid) return
-      this.me = {
-        ...this.me,
-        x: e.pageX,
-        y: e.pageY,
+    input({ target: { value } }) {
+      this.name = value.replace(/ /g, "");
+      const englishFilter = /^[A-Za-z0-9]*$/
+      if (this.users.filter(user => user.name === value).length !== 0) {
+        
+      } else if (this.name.length > 10) {
+        this.message = '10자 이하로 만들어주세요!'
+        this.name = this.name.slice(0, 10)
+        this.status = 'error'
+      } else if (this.name.length == 0) {
+        
+      } else {
+        this.message = ''
+        this.status = ''
       }
-      db.ref(`users/${this.uid}`).set(this.me)
     },
-    clickOutside(e) {
-      this.isInputFocus = false
-      e.target.blur()
+    pressEnter() {
+      if (!this.isValid) return
+      this.clickStart()
     },
-    async login() {
-      const user = await firebase.auth().signInWithPopup(new firebase.auth.GithubAuthProvider())
-      // console.log(user)
-      this.user = user.user
-      this.uid = user.user.uid
-      this.me = {
-        ...this.me,
-        avatar: user.user.photoURL,
-        name: user.user.displayName || user.user.email.substring(0, user.user.email.lastIndexOf('@')),
-        x: 0,
-        y: 0,
+    clickStart() {
+      if(this.name.length > 0){
+        const user = {
+          name: this.name,
+          score: 0,
+          highScore: 0,
+          x: Math.floor(Math.random() * (W_MAX - W_MIN) + W_MIN), // 500 ~ 2500
+          y: Math.floor(Math.random() * (H_MAX - H_MIN) + H_MIN),
+        }
+        const key = db.ref(`users`).push(user).key
+        this.$router.push(`/game?key=${key}`)
       }
-      db.ref(`users/${this.uid}`).set(this.me)
     },
   },
   computed: {
-    userList() {
-      const users = this.users.map(user => {
-        const result = { ...user }
-        delete result['.key']
-        return result
-      })
-      return users
+    isValid() {
+      return (
+        this.name !== '' &&
+        this.users &&
+        this.users.filter(user => user.name === this.name).length === 0 &&
+        this.name.length <= 10
+      )
     },
   },
   components: {},
@@ -165,56 +93,117 @@ export default {
   /* position: absolute; */
   height: 100%;
   width: 100%;
-  cursor: none;
+  cursor: auto;
   overflow: hidden;
-  background-color: black;
-  background-image: url(../static/stars.svg)
+  background: url('/background-2.gif');
+  background-repeat: no-repeat;
+  background-size: cover;
+  background-size: 100% 100%;
+}
+
+.logo-parent {
+  position: absolute;
+  top: 43%;
+  left: 50%;
+  transform: translate(-50%, -50%);
 }
 
 .logo {
   width: 185px;
   height: 138px;
-  background-image: url(../static/logo.svg);
+  background-image: url(../static/newLogo.svg);
   background-repeat: no-repeat;
   line-height: 138px;
-  position:absolute;
-  top:40%;
-  left: 53%;
-  transform: translate(-50%, -50%);
 }
 
 .input-name {
   width: 240px;
   height: 50px;
-  background-color:rgba(255, 255, 255, 0);
+  background-color: rgba(255, 255, 255, 0);
   border: 1px solid #fff;
-  margin:0 auto;
-  text-align: center; 
+  margin: 0 auto;
+  text-align: center;
   color: #fff;
 
   font-size: 18px;
-  position: absolute;
-  top: 48%; 
+  top: 51%;
   left: 50%;
-  transform: translate(-50%, -50%);
   margin-top: 10px;
-  
 }
 
 .btn-start {
   width: 200px;
   height: 50px;
-  background-color: #EB5757;
+  background-color: #eb5757;
+  border: 0ex;
   font-size: 18px;
-  position:absolute;
-  top:56%;
-  left:50%;
-  transform: translate(-50%, -50%);
+  top: 59%;
+  left: 50%;
   margin-top: 20px;
-
-
 }
 
+.btn-start:active {
+  background-color: #fff;
+  color: #eb5757;
+}
 
+.center {
+  position: absolute;
+  transform: translate(-50%, -50%);
+}
 
+footer {
+  font-size: 10px;
+  color: #f2c94c;
+
+  position: absolute;
+  bottom: 0;
+  left: 50%;
+  transform: translate(-50%, -50%);
+}
+
+@keyframes bounce {
+  from,
+  20%,
+  53%,
+  80%,
+  to {
+    -webkit-animation-timing-function: cubic-bezier(0.215, 0.61, 0.355, 1);
+    animation-timing-function: cubic-bezier(0.215, 0.61, 0.355, 1);
+    -webkit-transform: translate3d(0, 0, 0);
+    transform: translate3d(0, 0, 0);
+  }
+
+  40%,
+  43% {
+    -webkit-animation-timing-function: cubic-bezier(0.755, 0.05, 0.855, 0.06);
+    animation-timing-function: cubic-bezier(0.755, 0.05, 0.855, 0.06);
+    -webkit-transform: translate3d(0, -28px, 0);
+    transform: translate3d(0, -28px, 0);
+  }
+
+  70% {
+    -webkit-animation-timing-function: cubic-bezier(0.755, 0.05, 0.855, 0.06);
+    animation-timing-function: cubic-bezier(0.755, 0.05, 0.855, 0.06);
+    -webkit-transform: translate3d(0, -15px, 0);
+    transform: translate3d(0, -15px, 0);
+  }
+
+  90% {
+    -webkit-transform: translate3d(0, -4px, 0);
+    transform: translate3d(0, -4px, 0);
+  }
+}
+
+.bounce {
+  -webkit-animation-name: bounce;
+  animation-name: bounce;
+  -webkit-transform-origin: center bottom;
+  transform-origin: center bottom;
+
+  -webkit-animation-duration: 1.5s;
+  animation-duration: 1.5s;
+  animation-delay: 4s;
+  animation-iteration-count: infinite;
+}
 </style>

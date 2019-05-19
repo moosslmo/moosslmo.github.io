@@ -1,7 +1,5 @@
 <template>
   <div class="container">
-    <a-button type="primary"
-              @click="cameraOn">Camera on</a-button>
     <div class="camera">
       <video ref="video"
              autoplay
@@ -9,16 +7,21 @@
              width="480"
              height="360"></video>
       <canvas class="face"
+              id="userFace"
               ref="userFace"
-              width="200"
-              height="200"></canvas>
+              :width="200"
+              :height="200"></canvas>
     </div>
-    <img class="other__face"
-         v-for="user in userList"
-         :key="user.name"
-         :src="user.faceImage"
-         width="200"
-         height="200" />
+    <div class="board">
+      <img src="leaderboard.svg" />
+      <div class="ranking"
+           v-for="(user,i) in userRankList"
+           :key="i">
+        <div class="rank">{{ i + 1 }}</div>
+        <div class="name">{{ user.name }}</div>
+        <div class="score">{{ Math.floor(user.score) }}</div>
+      </div>
+    </div>
   </div>
 </template>
 
@@ -26,150 +29,54 @@
 import db, { firebase } from '../plugins/db'
 import User from '../components/User.vue'
 import * as faceapi from 'face-api.js'
-import { clearInterval } from 'timers';
+import { MAX_W_SIZE, MAX_H_SIZE } from '../plugins/constants.js'
 
-let faceDetector
+const GAME_OVER_TIME = 15
 
 export default {
   data: () => ({
-    user: null,
     uid: null,
     me: null,
     inputText: '',
     isInputFocus: false,
     isFace: false,
     timer: null,
+    key: '',
+    faceInterval: null,
+    scoreInterval: null,
+    manager: null,
+    startX: 0,
+    startY: 0,
+    width: 150,
   }),
   firebase: () => ({
     users: db.ref('users'),
   }),
-  async created() {
-    if (faceDetector) {
-      this.$message.warn(
-        `Go to "chrome://flags/" and enable "Experimental Web Platform features" for face detection API.`,
-        10,
-      )
-    }
-    firebase.auth().onAuthStateChanged(user => {
-      if (user) {
-        console.log(user)
-        this.user = user
-        this.uid = user.uid
-        this.me = {
-          ...this.me,
-          avatar: user.photoURL,
-          name: user.displayName || user.email.substring(0, user.email.lastIndexOf('@')),
-          x: 100,
-          y: 100,
-        }
-        db.ref(`users/${this.uid}`).set(this.me)
-      }
-    })
-    const { key } = await db.ref(`users`).push({
-      name: Math.random().toString(),
-      score: 0,
-    })
-    this.key = key
-    window.addEventListener('beforeunload', e => {
-      clearInterval(this.timer)
-      db.ref(`users/${key}`).set({})
-    })
-    window.addEventListener('keypress', e => {
-      if (e.keyCode !== 13 || !this.me) return
-      if (!this.isInputFocus) {
-        this.inputText = ''
-        this.$refs.input.focus()
-        this.isInputFocus = true
-      } else {
-        this.isInputFocus = false
-        e.target.blur()
-        if (this.inputText === '') return
-        this.me = {
-          ...this.me,
-          message: this.inputText,
-        }
-        db.ref(`users/${this.uid}/message`).set(this.inputText)
-        db.ref(`messages`)
-          .push()
-          .set(this.inputText)
-        this.inputText = ''
-      }
-    })
-    window.addEventListener('keypress', async e => {
-      // console.log(e.keyCode)
-      if ((e.keyCode !== 116 && e.keyCode !== 12613) || this.isInputFocus) return
-      if (!this.isFace) {
-        this.cameraOn()
-        this.isFace = true
-        this.timer = setInterval(() => {
-          faceDetector.detect(this.$refs.video).then(faces => {
-            if (!faces[0]) return
-            const { x, y, width, height } = faces[0].boundingBox
-            const margin = width / 3
-            this.$refs.canvas
-              .getContext('2d')
-              .drawImage(
-                this.$refs.video,
-                x - margin,
-                y - margin,
-                width + margin * 2,
-                height + margin * 2,
-                0,
-                0,
-                100,
-                100,
-              )
-            const base = this.$refs.canvas.toDataURL('image/jpeg', 0.5)
-            this.me = {
-              ...this.me,
-              face: base,
-              isFace: this.isFace,
-            }
-            db.ref(`users/${this.uid}`).set(this.me)
-          })
-        }, 100)
-      } else {
-        this.isFace = false
-        this.me = {
-          ...this.me,
-          isFace: this.isFace,
-        }
-        db.ref(`users/${this.uid}`).set(this.me)
-        clearInterval(this.timer)
-      }
-    })
-  },
   async mounted() {
+    const key = (this.key = this.$route.query.key)
+    const s = await db.ref(`users/${key}`).once('value')
+    if (!s.val()) {
+      this.$router.push(`/`)
+      return
+    }
+    this.$bindAsObject('user', db.ref(`users/${key}`))
+    const score = (this.score = 0)
+    const highScore = (this.highScore = 0)
+    const outCount = (this.outCount = 0)
+    window.addEventListener('beforeunload', e => {
+      db.ref(`users/${key}`).set({})
+      clearInterval(this.faceInterval)
+      clearInterval(this.scoreInterval)
+    })
     await faceapi.nets.tinyFaceDetector.loadFromUri('/models')
+    this.cameraOn()
+  },
+  unmount() {
+    clearInterval(this.faceInterval)
+    clearInterval(this.scoreInterval)
+    db.ref(`users/${this.key}`).set({})
   },
   methods: {
-    mousemove(e) {
-      if (!this.user && !this.uid) return
-      this.me = {
-        ...this.me,
-        x: e.pageX,
-        y: e.pageY,
-      }
-      db.ref(`users/${this.uid}`).set(this.me)
-    },
-    clickOutside(e) {
-      this.isInputFocus = false
-      e.target.blur()
-    },
-    async login() {
-      const user = await firebase.auth().signInWithPopup(new firebase.auth.GithubAuthProvider())
-      // console.log(user)
-      this.user = user.user
-      this.uid = user.user.uid
-      this.me = {
-        ...this.me,
-        avatar: user.user.photoURL,
-        name: user.user.displayName || user.user.email.substring(0, user.user.email.lastIndexOf('@')),
-        x: 0,
-        y: 0,
-      }
-      db.ref(`users/${this.uid}`).set(this.me)
-    },
     async cameraOn() {
       const video = this.$refs.video
       try {
@@ -180,23 +87,46 @@ export default {
       } catch (e) {
         console.log(e)
       }
-      this.timer = setInterval(() => {
+      this.faceInterval = setInterval(() => {
         this.detectFace()
       }, 16)
+      this.scoreInterval = setInterval(() => {
+        this.score += 0.5
+        if (this.score > this.highScore) {
+          this.highScore = this.score
+          db.ref(`users/${this.key}/highScore`).set(this.highScore)
+        }
+        db.ref(`users/${this.key}/score`).set(this.score)
+      }, 100)
     },
     async detectFace() {
       const detection = await faceapi.detectSingleFace(
         this.$refs.video,
         new faceapi.TinyFaceDetectorOptions({ inputSize: 224 }),
       )
-      console.log(detection)
+      // console.log(detection)
       // const canvas = this.$refs.overlay
       // const dims = faceapi.matchDimensions(canvas, this.$refs.video, true)
       if (detection) {
+        this.outCount = 0
         //faceapi.draw.drawDetections(canvas, faceapi.resizeResults(detection, dims))
         this.setUserFace(detection)
       } else {
-        console.log('Out of Camera')
+        // console.log('Out of Camera')
+        // db.ref(`users/${this.key}`).set({})
+        ++this.outCount
+        if (this.outCount > GAME_OVER_TIME) {
+          if (this.score > 1) {
+            this.score -= Math.floor(this.score / 100)
+            if (this.users.filter(user => user['.key'] === this.key).length !== 0) {
+              db.ref(`users/${this.key}/score`).set(this.score)
+            }
+          } else {
+            // console.log('GAME OVER')
+            db.ref(`users/${this.key}/highScore`).set(this.highScore)
+            //this.$router.push(`/die?key=${this.key}`)
+          }
+        }
       }
     },
     async setUserFace(detection) {
@@ -213,20 +143,29 @@ export default {
         height = width
         top = top + heightMargin / 2
       }
-      console.log(width, height)
+      const imageWidth = this.score < 100 ? Math.floor(150 + this.score) : 250
+      this.width = imageWidth
       ctx.drawImage(this.$refs.video, left, top, width, height, 0, 0, 200, 200)
-      db.ref(`users/${this.key}/faceImage`).set(userFace.toDataURL('image/jpeg', 0.3))
+      if (this.users.filter(user => user['.key'] === this.key).length !== 0) {
+        db.ref(`users/${this.key}/faceImage`).set(userFace.toDataURL('image/jpeg', 0.01))
+        //db.ref(`users/${this.key}/x`).set(this.user.x)
+      }
     },
   },
   computed: {
     userList() {
       const users = this.users
         .filter(user => user['.key'] !== this.key)
+        .filter(user => user.faceImage)
         .map(user => {
           const result = { ...user }
           delete result['.key']
           return result
         })
+      return users
+    },
+    userRankList() {
+      const users = [...this.users].sort((a, b) => b.score - a.score).slice(0, 5)
       return users
     },
   },
@@ -239,15 +178,23 @@ export default {
   /* position: absolute; */
   height: 100%;
   width: 100%;
-  cursor: none;
-  /* overflow: hidden; */
+  display: grid;
+  background-color: black;
+  overflow-x: hidden;
+  position: relative;
+  background-image: url('/background-2.gif');
+  background-size: 70%;
+
   .camera {
+    justify-self: center;
+    align-self: center;
     /* position: relative; */
-    width: 200px;
+    /* width: 200px; */
     canvas {
       /* position: absolute; */
       display: block;
       border-radius: 100%;
+      border: 6px solid #f2c94c;
     }
     video {
       display: block;
@@ -256,11 +203,53 @@ export default {
       visibility: hidden;
     }
   }
-  .other__face {
-    display: inline-block;
-    border-radius: 100%;
-    width: 100px;
-    height: 100px;
+  .board {
+    position: absolute;
+    justify-self: center;
+    align-self: end;
+    margin-bottom: 30px;
+    .ranking {
+      display: grid;
+      grid-auto-flow: column;
+      grid-template-columns: 26px 1fr 86px;
+      font-family: 'Open Sans';
+      margin-top: 8px;
+      height: 20px;
+      .rank {
+        font-style: normal;
+        font-weight: bold;
+        font-size: 14px;
+        line-height: 19px;
+        align-items: center;
+        text-align: center;
+        color: #ffffff;
+        background-color: #ffc338;
+        border-radius: 6px;
+        margin-left: 6px;
+      }
+      .name {
+        font-style: normal;
+        font-weight: bold;
+        font-size: 14px;
+        line-height: 19px;
+        align-items: center;
+        letter-spacing: -0.06em;
+        color: #dad9d9;
+        margin-left: 6px;
+      }
+      .score {
+        background-color: #f2f2f2;
+        border-radius: 6px;
+        font-style: normal;
+        font-weight: bold;
+        font-size: 14px;
+        line-height: 19px;
+        align-items: center;
+        text-align: center;
+        color: #000a15;
+        margin-right: 6px;
+      }
+    }
   }
 }
 @keyframes popup {

@@ -162,7 +162,6 @@ export default {
     },
     async login() {
       const user = await firebase.auth().signInWithPopup(new firebase.auth.GithubAuthProvider())
-      // console.log(user)
       this.user = user.user
       this.uid = user.user.uid
       this.me = {
